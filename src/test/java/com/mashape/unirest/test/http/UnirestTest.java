@@ -65,7 +65,7 @@ public class UnirestTest {
 		status = false;
 	}
 
-	private String findAvailableIpAddress() throws UnknownHostException, IOException {
+	private String findUnreachableIpAddress() throws UnknownHostException, IOException {
 		for (int i = 100; i <= 255; i++) {
 			String ip = "192.168.1." + i;
 			if (!InetAddress.getByName(ip).isReachable(1000)) {
@@ -73,7 +73,7 @@ public class UnirestTest {
 			}
 		}
 
-		throw new RuntimeException("Couldn't find an available IP address in the range of 192.168.0.100-255");
+		throw new RuntimeException("Couldn't find an available IP address in the range of 192.168.1.100-255");
 	}
 
 	@Test
@@ -513,23 +513,23 @@ public class UnirestTest {
 
 	@Test
 	public void testSetTimeouts() throws UnknownHostException, IOException {
-		String address = "http://" + findAvailableIpAddress() + "/";
+		String address = "http://" + findUnreachableIpAddress() + "/";
 		long start = System.currentTimeMillis();
 		try {
-			Unirest.get("http://" + address + "/").asString();
+			Unirest.get(address).asString();
 		} catch (Exception e) {
-			if (System.currentTimeMillis() - start > Options.CONNECTION_TIMEOUT + 100) { // Add 100ms for code execution
-				fail();
-			}
+			long actualTimeout = System.currentTimeMillis() - start;
+			long maxTimeout = Options.CONNECTION_TIMEOUT + 500; // Allow half second for variance
+			assertTrue("Actual timeout " + actualTimeout + " is greater than expected " + maxTimeout, actualTimeout <= maxTimeout);
 		}
 		Unirest.setTimeouts(2000, 10000);
 		start = System.currentTimeMillis();
 		try {
-			Unirest.get("http://" + address + "/").asString();
+			Unirest.get(address).asString();
 		} catch (Exception e) {
-			if (System.currentTimeMillis() - start > 2100) { // Add 100ms for code execution
-				fail();
-			}
+			long actualTimeout = System.currentTimeMillis() - start;
+			long maxTimeout = 2000 + 500; // Allow half second for variance
+			assertTrue("Actual timeout " + actualTimeout + " is greater than expected " + maxTimeout, actualTimeout <= maxTimeout);
 		}
 	}
 
