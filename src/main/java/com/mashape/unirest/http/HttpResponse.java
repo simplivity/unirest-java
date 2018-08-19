@@ -31,26 +31,35 @@ import com.mashape.unirest.http.utils.ResponseUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.StatusLine;
+import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.util.EntityUtils;
 
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.GZIPInputStream;
 
-public class HttpResponse<T> {
+public class HttpResponse<T> implements Closeable {
 
 	private int statusCode;
 	private String statusText;
 	private Headers headers = new Headers();
 	private InputStream rawBody;
 	private T body;
+	private HttpEntity responseEntity;
+	private HttpRequestBase requestObj;
+
+	public HttpResponse(org.apache.http.HttpResponse response, Class<T> responseClass) {
+		this(response, responseClass, null);
+	}
 
 	@SuppressWarnings("unchecked")
-	public HttpResponse(org.apache.http.HttpResponse response, Class<T> responseClass) {
-		HttpEntity responseEntity = response.getEntity();
+	public HttpResponse(org.apache.http.HttpResponse response, Class<T> responseClass, HttpRequestBase requestObj) {
+		responseEntity = response.getEntity();
+		this.requestObj = requestObj;
 		ObjectMapper objectMapper = (ObjectMapper) Options.getOption(Option.OBJECT_MAPPER);
 
 		Header[] allHeaders = response.getAllHeaders();
@@ -78,17 +87,26 @@ public class HttpResponse<T> {
 			}
 
 			try {
-				byte[] rawBody;
+				byte[] rawBody = null;
 				try {
 					InputStream responseInputStream = responseEntity.getContent();
 					if (ResponseUtils.isGzipped(responseEntity.getContentEncoding())) {
 						responseInputStream = new GZIPInputStream(responseEntity.getContent());
 					}
-					rawBody = ResponseUtils.getBytes(responseInputStream);
+					// If responseClass is InputStream, just copy the stream as it is to
+					// rawBody. Then require the client to explicitly close the connection using "close" method.
+					// Otherwise the existing code will allocate a big byte buffer to download
+					// all the contents at once.
+					//
+					if (InputStream.class.equals(responseClass)) {
+						this.rawBody =  responseInputStream;
+					} else {
+						rawBody = ResponseUtils.getBytes(responseInputStream);
+						this.rawBody = new ByteArrayInputStream(rawBody);
+					}
 				} catch (IOException e2) {
 					throw new RuntimeException(e2);
 				}
-				this.rawBody = new ByteArrayInputStream(rawBody);
 
 				if (JsonNode.class.equals(responseClass)) {
 					String jsonString = new String(rawBody, charset).trim();
@@ -106,8 +124,15 @@ public class HttpResponse<T> {
 				throw new RuntimeException(e);
 			}
 		}
-		
-		EntityUtils.consumeQuietly(responseEntity);
+
+		// InputStream client needs to call "close" method explicitly
+		// to close the connection and empty out the response entity.
+		// Otherwise, inputStream will be closed prematurely.
+		//
+		if (!InputStream.class.equals(responseClass)) {
+			EntityUtils.consumeQuietly(responseEntity);
+			responseEntity = null;
+		}
 	}
 
 	public int getStatus() {
@@ -132,5 +157,16 @@ public class HttpResponse<T> {
 
 	public T getBody() {
 		return body;
+	}
+
+	@Override
+	public void close() throws IOException {
+		// InputStream client needs to call this method explicitly
+		// to close the connection and empty out the response entity.
+		//
+		if (requestObj != null)
+			requestObj.releaseConnection();
+		if (responseEntity != null)
+			EntityUtils.consume(responseEntity);
 	}
 }
